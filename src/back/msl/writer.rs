@@ -2585,14 +2585,21 @@ impl<W: Write> Writer<W> {
                         let lif = level.next();
                         let lcontinuing = lif.next();
                         writeln!(self.out, "{}if (!{}) {{", lif, gate_name)?;
-                        self.put_block(lcontinuing, continuing, context)?;
+
                         if let Some(condition) = break_if {
-                            write!(self.out, "{}if (", lcontinuing)?;
+                            write!(self.out, "{}bool loop_break = ", lcontinuing)?;
                             self.put_expression(condition, &context.expression, true)?;
-                            writeln!(self.out, ") {{")?;
+                            writeln!(self.out, ";")?;
+                        }
+
+                        self.put_block(lcontinuing, continuing, context)?;
+
+                        if break_if.is_some() {
+                            writeln!(self.out, "{}if (loop_break) {{", lcontinuing)?;
                             writeln!(self.out, "{}break;", lcontinuing.next())?;
                             writeln!(self.out, "{}}}", lcontinuing)?;
                         }
+
                         writeln!(self.out, "{}}}", lif)?;
                         writeln!(self.out, "{}{} = false;", lif, gate_name)?;
                     } else {
