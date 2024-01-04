@@ -19,8 +19,6 @@ struct Baz {
 struct MatCx2InArray {
     mat4x2 am[2];
 };
-shared uint val;
-
 
 float read_from_private(inout float foo_1) {
     float _e1 = foo_1;
@@ -42,13 +40,8 @@ void assign_array_through_ptr_fn(inout vec4 foo_2[2]) {
 }
 
 void main() {
-    if (gl_LocalInvocationID == uvec3(0u)) {
-        val = 0u;
-    }
-    memoryBarrierShared();
-    barrier();
-    vec4 arr[2] = vec4[2](vec4(0.0), vec4(0.0));
-    arr = vec4[2](vec4(6.0), vec4(7.0));
+    uint val = 33u;
+    vec4 arr[2] = vec4[2](vec4(6.0), vec4(7.0));
     assign_through_ptr_fn(val);
     assign_array_through_ptr_fn(arr);
     return;

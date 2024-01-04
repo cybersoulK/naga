@@ -108,25 +108,6 @@ fn unknown_identifier() {
 }
 
 #[test]
-fn negative_index() {
-    check(
-        r#"
-            fn main() -> f32 {
-                let a = array<f32, 3>(0., 1., 2.);
-                return a[-1];
-            }
-        "#,
-        r#"error: expected unsigned integer constant expression, found `-1`
-  ┌─ wgsl:4:26
-  │
-4 │                 return a[-1];
-  │                          ^^ expected unsigned integer
-
-"#,
-    );
-}
-
-#[test]
 fn bad_texture() {
     check(
         r#"
@@ -921,13 +902,33 @@ fn invalid_arrays() {
         })
     }
 
+    check_validation! {
+        r#"
+            fn main() -> f32 {
+                let a = array<f32, 3>(0., 1., 2.);
+                return a[-1];
+            }
+        "#:
+        Err(
+            naga::valid::ValidationError::Function {
+                name,
+                source: naga::valid::FunctionError::Expression {
+                    source: naga::valid::ExpressionError::NegativeIndex(_),
+                    ..
+                },
+                ..
+            }
+        )
+            if name == "main"
+    }
+
     check(
         "alias Bad = array<f32, true>;",
-        r###"error: array element count must resolve to an integer scalar (u32 or i32)
+        r###"error: must be a const-expression that resolves to a concrete integer scalar (u32 or i32)
   ┌─ wgsl:1:24
   │
 1 │ alias Bad = array<f32, true>;
-  │                        ^^^^ must resolve to u32/i32
+  │                        ^^^^ must resolve to u32 or i32
 
 "###,
     );
@@ -937,33 +938,33 @@ fn invalid_arrays() {
             const length: f32 = 2.718;
             alias Bad = array<f32, length>;
         "#,
-        r###"error: array element count must resolve to an integer scalar (u32 or i32)
+        r###"error: must be a const-expression that resolves to a concrete integer scalar (u32 or i32)
   ┌─ wgsl:3:36
   │
 3 │             alias Bad = array<f32, length>;
-  │                                    ^^^^^^ must resolve to u32/i32
+  │                                    ^^^^^^ must resolve to u32 or i32
 
 "###,
     );
 
     check(
         "alias Bad = array<f32, 0>;",
-        r###"error: array element count must be greater than zero
+        r###"error: array element count must be positive (> 0)
   ┌─ wgsl:1:24
   │
 1 │ alias Bad = array<f32, 0>;
-  │                        ^ must be greater than zero
+  │                        ^ must be positive
 
 "###,
     );
 
     check(
         "alias Bad = array<f32, -1>;",
-        r###"error: array element count must be greater than zero
+        r###"error: array element count must be positive (> 0)
   ┌─ wgsl:1:24
   │
 1 │ alias Bad = array<f32, -1>;
-  │                        ^^ must be greater than zero
+  │                        ^^ must be positive
 
 "###,
     );
@@ -1064,7 +1065,7 @@ fn invalid_functions() {
         })
     }
 
-    // Pointers of these storage classes cannot be passed as arguments.
+    // Pointers of these address spaces cannot be passed as arguments.
     check_validation! {
         "fn unacceptable_ptr_space(arg: ptr<storage, array<f32>>) { }":
         Err(naga::valid::ValidationError::Function {
@@ -1078,7 +1079,6 @@ fn invalid_functions() {
         })
         if function_name == "unacceptable_ptr_space" && argument_name == "arg"
     }
-
     check_validation! {
         "fn unacceptable_ptr_space(arg: ptr<uniform, f32>) { }":
         Err(naga::valid::ValidationError::Function {
@@ -1087,6 +1087,19 @@ fn invalid_functions() {
                 index: 0,
                 name: argument_name,
                 space: naga::AddressSpace::Uniform,
+            },
+            ..
+        })
+        if function_name == "unacceptable_ptr_space" && argument_name == "arg"
+    }
+    check_validation! {
+        "fn unacceptable_ptr_space(arg: ptr<workgroup, f32>) { }":
+        Err(naga::valid::ValidationError::Function {
+            name: function_name,
+            source: naga::valid::FunctionError::InvalidArgumentPointerSpace {
+                index: 0,
+                name: argument_name,
+                space: naga::AddressSpace::WorkGroup,
             },
             ..
         })
@@ -1341,6 +1354,23 @@ fn invalid_local_vars() {
             ..
         })
         if local_var_name == "not_okay"
+    }
+
+    check_validation! {
+        "
+        fn f() {
+            var x: atomic<u32>;
+        }
+        ":
+        Err(naga::valid::ValidationError::Function {
+            source: naga::valid::FunctionError::LocalVariable {
+                name: local_var_name,
+                source: naga::valid::LocalVariableError::InvalidType(_),
+                ..
+            },
+            ..
+        })
+        if local_var_name == "x"
     }
 }
 
@@ -1603,6 +1633,21 @@ fn host_shareable_types() {
             )
             if name == "ubuf"
         }
+    }
+}
+
+#[test]
+fn var_init() {
+    check_validation! {
+        "
+        var<workgroup> initialized: u32 = 0u;
+        ":
+        Err(
+            naga::valid::ValidationError::GlobalVariable {
+                source: naga::valid::GlobalVariableError::InitializerNotAllowed(naga::AddressSpace::WorkGroup),
+                ..
+            },
+        )
     }
 }
 

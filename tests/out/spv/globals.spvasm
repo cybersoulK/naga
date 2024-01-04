@@ -1,13 +1,13 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 179
+; Bound: 174
 OpCapability Shader
 OpExtension "SPV_KHR_storage_buffer_storage_class"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %103 "main" %122
-OpExecutionMode %103 LocalSize 1 1 1
+OpEntryPoint GLCompute %93 "main" %116
+OpExecutionMode %93 LocalSize 1 1 1
 OpDecorate %5 ArrayStride 4
 OpMemberDecorate %9 0 Offset 0
 OpMemberDecorate %9 1 Offset 12
@@ -17,38 +17,38 @@ OpDecorate %17 ArrayStride 32
 OpDecorate %19 ArrayStride 64
 OpDecorate %21 ArrayStride 32
 OpDecorate %22 ArrayStride 64
-OpDecorate %32 DescriptorSet 0
-OpDecorate %32 Binding 1
-OpDecorate %33 Block
-OpMemberDecorate %33 0 Offset 0
-OpDecorate %35 NonWritable
-OpDecorate %35 DescriptorSet 0
-OpDecorate %35 Binding 2
-OpDecorate %36 Block
-OpMemberDecorate %36 0 Offset 0
-OpDecorate %38 DescriptorSet 0
-OpDecorate %38 Binding 3
-OpDecorate %39 Block
-OpMemberDecorate %39 0 Offset 0
-OpDecorate %41 DescriptorSet 0
-OpDecorate %41 Binding 4
-OpDecorate %42 Block
-OpMemberDecorate %42 0 Offset 0
-OpDecorate %44 DescriptorSet 0
-OpDecorate %44 Binding 5
-OpDecorate %45 Block
-OpMemberDecorate %45 0 Offset 0
-OpMemberDecorate %45 0 ColMajor
-OpMemberDecorate %45 0 MatrixStride 8
-OpDecorate %47 DescriptorSet 0
-OpDecorate %47 Binding 6
-OpDecorate %48 Block
-OpMemberDecorate %48 0 Offset 0
-OpDecorate %50 DescriptorSet 0
-OpDecorate %50 Binding 7
-OpDecorate %51 Block
-OpMemberDecorate %51 0 Offset 0
-OpDecorate %122 BuiltIn LocalInvocationId
+OpDecorate %30 DescriptorSet 0
+OpDecorate %30 Binding 1
+OpDecorate %31 Block
+OpMemberDecorate %31 0 Offset 0
+OpDecorate %33 NonWritable
+OpDecorate %33 DescriptorSet 0
+OpDecorate %33 Binding 2
+OpDecorate %34 Block
+OpMemberDecorate %34 0 Offset 0
+OpDecorate %36 DescriptorSet 0
+OpDecorate %36 Binding 3
+OpDecorate %37 Block
+OpMemberDecorate %37 0 Offset 0
+OpDecorate %39 DescriptorSet 0
+OpDecorate %39 Binding 4
+OpDecorate %40 Block
+OpMemberDecorate %40 0 Offset 0
+OpDecorate %42 DescriptorSet 0
+OpDecorate %42 Binding 5
+OpDecorate %43 Block
+OpMemberDecorate %43 0 Offset 0
+OpMemberDecorate %43 0 ColMajor
+OpMemberDecorate %43 0 MatrixStride 8
+OpDecorate %45 DescriptorSet 0
+OpDecorate %45 Binding 6
+OpDecorate %46 Block
+OpMemberDecorate %46 0 Offset 0
+OpDecorate %48 DescriptorSet 0
+OpDecorate %48 Binding 7
+OpDecorate %49 Block
+OpMemberDecorate %49 0 Offset 0
+OpDecorate %116 BuiltIn LocalInvocationId
 %2 = OpTypeVoid
 %3 = OpTypeBool
 %4 = OpTypeFloat 32
@@ -73,188 +73,180 @@ OpDecorate %122 BuiltIn LocalInvocationId
 %23 = OpTypeInt 32 1
 %24 = OpTypeMatrix %8 3
 %25 = OpConstantTrue  %3
-%26 = OpConstant  %23  20
-%27 = OpConstant  %23  2
-%29 = OpTypePointer Workgroup %5
+%27 = OpTypePointer Workgroup %5
+%26 = OpVariable  %27  Workgroup
+%29 = OpTypePointer Workgroup %7
 %28 = OpVariable  %29  Workgroup
-%31 = OpTypePointer Workgroup %7
-%30 = OpVariable  %31  Workgroup
-%33 = OpTypeStruct %9
-%34 = OpTypePointer StorageBuffer %33
-%32 = OpVariable  %34  StorageBuffer
-%36 = OpTypeStruct %11
-%37 = OpTypePointer StorageBuffer %36
-%35 = OpVariable  %37  StorageBuffer
-%39 = OpTypeStruct %13
-%40 = OpTypePointer Uniform %39
-%38 = OpVariable  %40  Uniform
-%42 = OpTypeStruct %8
-%43 = OpTypePointer Uniform %42
-%41 = OpVariable  %43  Uniform
-%45 = OpTypeStruct %15
-%46 = OpTypePointer Uniform %45
-%44 = OpVariable  %46  Uniform
-%48 = OpTypeStruct %19
-%49 = OpTypePointer Uniform %48
-%47 = OpVariable  %49  Uniform
-%51 = OpTypeStruct %22
-%52 = OpTypePointer Uniform %51
-%50 = OpVariable  %52  Uniform
-%56 = OpTypeFunction %2 %8
-%59 = OpTypePointer Function %23
-%60 = OpConstantNull  %23
-%63 = OpTypeFunction %2
-%64 = OpTypePointer StorageBuffer %9
-%65 = OpConstant  %7  0
-%67 = OpConstant  %4  1.0
-%68 = OpConstant  %23  1
-%69 = OpConstant  %4  2.0
-%70 = OpConstant  %4  3.0
-%71 = OpConstantNull  %24
-%72 = OpConstantNull  %24
-%74 = OpTypePointer StorageBuffer %8
-%77 = OpTypePointer StorageBuffer %4
-%97 = OpTypePointer Function %4
-%98 = OpConstantNull  %4
-%100 = OpTypePointer Function %3
-%101 = OpConstantNull  %3
-%105 = OpTypePointer StorageBuffer %11
-%107 = OpTypePointer Uniform %13
-%109 = OpTypePointer Uniform %8
-%111 = OpTypePointer Uniform %15
-%113 = OpTypePointer Uniform %19
-%115 = OpTypePointer Uniform %22
-%117 = OpConstant  %4  4.0
-%119 = OpConstantNull  %5
-%120 = OpConstantNull  %7
-%121 = OpTypeVector %7 3
-%123 = OpTypePointer Input %121
-%122 = OpVariable  %123  Input
-%125 = OpConstantNull  %121
-%126 = OpTypeVector %3 3
-%131 = OpConstant  %7  264
-%134 = OpTypePointer Workgroup %4
-%135 = OpTypePointer Uniform %21
-%136 = OpTypePointer Uniform %20
-%139 = OpTypePointer Uniform %17
-%140 = OpTypePointer Uniform %16
-%141 = OpTypePointer Uniform %12
-%146 = OpConstant  %7  7
-%152 = OpConstant  %7  6
-%154 = OpTypePointer StorageBuffer %10
-%155 = OpConstant  %7  1
-%158 = OpConstant  %7  5
-%160 = OpTypePointer Uniform %12
-%161 = OpTypePointer Uniform %4
-%162 = OpConstant  %7  3
-%165 = OpConstant  %7  4
-%167 = OpTypePointer StorageBuffer %4
-%178 = OpConstant  %7  256
-%55 = OpFunction  %2  None %56
-%54 = OpFunctionParameter  %8
-%53 = OpLabel
-OpBranch %57
-%57 = OpLabel
+%31 = OpTypeStruct %9
+%32 = OpTypePointer StorageBuffer %31
+%30 = OpVariable  %32  StorageBuffer
+%34 = OpTypeStruct %11
+%35 = OpTypePointer StorageBuffer %34
+%33 = OpVariable  %35  StorageBuffer
+%37 = OpTypeStruct %13
+%38 = OpTypePointer Uniform %37
+%36 = OpVariable  %38  Uniform
+%40 = OpTypeStruct %8
+%41 = OpTypePointer Uniform %40
+%39 = OpVariable  %41  Uniform
+%43 = OpTypeStruct %15
+%44 = OpTypePointer Uniform %43
+%42 = OpVariable  %44  Uniform
+%46 = OpTypeStruct %19
+%47 = OpTypePointer Uniform %46
+%45 = OpVariable  %47  Uniform
+%49 = OpTypeStruct %22
+%50 = OpTypePointer Uniform %49
+%48 = OpVariable  %50  Uniform
+%54 = OpTypeFunction %2 %8
+%58 = OpTypeFunction %2
+%59 = OpTypePointer StorageBuffer %9
+%60 = OpConstant  %7  0
+%62 = OpConstant  %4  1.0
+%63 = OpConstantComposite  %8  %62 %62 %62
+%64 = OpConstant  %23  1
+%65 = OpConstant  %4  2.0
+%66 = OpConstant  %4  3.0
+%67 = OpConstantNull  %24
+%69 = OpTypePointer Function %23
+%71 = OpTypePointer StorageBuffer %8
+%73 = OpTypePointer StorageBuffer %4
+%95 = OpTypePointer StorageBuffer %11
+%97 = OpTypePointer Uniform %13
+%99 = OpTypePointer Uniform %8
+%101 = OpTypePointer Uniform %15
+%103 = OpTypePointer Uniform %19
+%105 = OpTypePointer Uniform %22
+%107 = OpConstant  %4  4.0
+%109 = OpTypePointer Function %4
+%111 = OpTypePointer Function %3
+%113 = OpConstantNull  %5
+%114 = OpConstantNull  %7
+%115 = OpTypeVector %7 3
+%117 = OpTypePointer Input %115
+%116 = OpVariable  %117  Input
+%119 = OpConstantNull  %115
+%120 = OpTypeVector %3 3
+%125 = OpConstant  %7  264
+%128 = OpTypePointer Workgroup %4
+%129 = OpTypePointer Uniform %21
+%130 = OpTypePointer Uniform %20
+%133 = OpTypePointer Uniform %17
+%134 = OpTypePointer Uniform %16
+%135 = OpTypePointer Uniform %12
+%140 = OpConstant  %7  7
+%146 = OpConstant  %7  6
+%148 = OpTypePointer StorageBuffer %10
+%149 = OpConstant  %7  1
+%152 = OpConstant  %7  5
+%154 = OpTypePointer Uniform %12
+%155 = OpTypePointer Uniform %4
+%156 = OpConstant  %7  3
+%159 = OpConstant  %7  4
+%161 = OpTypePointer StorageBuffer %4
+%172 = OpConstant  %23  2
+%173 = OpConstant  %7  256
+%53 = OpFunction  %2  None %54
+%52 = OpFunctionParameter  %8
+%51 = OpLabel
+OpBranch %55
+%55 = OpLabel
 OpReturn
 OpFunctionEnd
-%62 = OpFunction  %2  None %63
-%61 = OpLabel
-%58 = OpVariable  %59  Function %60
-%66 = OpAccessChain  %64  %32 %65
-OpBranch %73
-%73 = OpLabel
-%75 = OpCompositeConstruct  %8  %67 %67 %67
-%76 = OpAccessChain  %74  %66 %65
-OpStore %76 %75
-OpStore %58 %68
-%78 = OpAccessChain  %77  %66 %65 %65
-OpStore %78 %67
-%79 = OpAccessChain  %77  %66 %65 %65
-OpStore %79 %69
-%80 = OpLoad  %23  %58
-%81 = OpAccessChain  %77  %66 %65 %80
-OpStore %81 %70
-%82 = OpLoad  %9  %66
-%83 = OpCompositeExtract  %8  %82 0
-%84 = OpCompositeExtract  %8  %82 0
-%85 = OpVectorShuffle  %10  %84 %84 2 0
-%86 = OpCompositeExtract  %8  %82 0
-%87 = OpFunctionCall  %2  %55 %86
-%88 = OpCompositeExtract  %8  %82 0
-%89 = OpVectorTimesMatrix  %8  %88 %71
-%90 = OpCompositeExtract  %8  %82 0
-%91 = OpMatrixTimesVector  %8  %72 %90
-%92 = OpCompositeExtract  %8  %82 0
-%93 = OpVectorTimesScalar  %8  %92 %69
-%94 = OpCompositeExtract  %8  %82 0
-%95 = OpVectorTimesScalar  %8  %94 %69
+%57 = OpFunction  %2  None %58
+%56 = OpLabel
+%68 = OpVariable  %69  Function %64
+%61 = OpAccessChain  %59  %30 %60
+OpBranch %70
+%70 = OpLabel
+%72 = OpAccessChain  %71  %61 %60
+OpStore %72 %63
+%74 = OpAccessChain  %73  %61 %60 %60
+OpStore %74 %62
+%75 = OpAccessChain  %73  %61 %60 %60
+OpStore %75 %65
+%76 = OpLoad  %23  %68
+%77 = OpAccessChain  %73  %61 %60 %76
+OpStore %77 %66
+%78 = OpLoad  %9  %61
+%79 = OpCompositeExtract  %8  %78 0
+%80 = OpCompositeExtract  %8  %78 0
+%81 = OpVectorShuffle  %10  %80 %80 2 0
+%82 = OpCompositeExtract  %8  %78 0
+%83 = OpFunctionCall  %2  %53 %82
+%84 = OpCompositeExtract  %8  %78 0
+%85 = OpVectorTimesMatrix  %8  %84 %67
+%86 = OpCompositeExtract  %8  %78 0
+%87 = OpMatrixTimesVector  %8  %67 %86
+%88 = OpCompositeExtract  %8  %78 0
+%89 = OpVectorTimesScalar  %8  %88 %65
+%90 = OpCompositeExtract  %8  %78 0
+%91 = OpVectorTimesScalar  %8  %90 %65
 OpReturn
 OpFunctionEnd
-%103 = OpFunction  %2  None %63
-%102 = OpLabel
-%96 = OpVariable  %97  Function %98
-%99 = OpVariable  %100  Function %101
-%104 = OpAccessChain  %64  %32 %65
-%106 = OpAccessChain  %105  %35 %65
-%108 = OpAccessChain  %107  %38 %65
-%110 = OpAccessChain  %109  %41 %65
-%112 = OpAccessChain  %111  %44 %65
-%114 = OpAccessChain  %113  %47 %65
-%116 = OpAccessChain  %115  %50 %65
-OpBranch %118
-%118 = OpLabel
-%124 = OpLoad  %121  %122
-%127 = OpIEqual  %126  %124 %125
-%128 = OpAll  %3  %127
-OpSelectionMerge %129 None
-OpBranchConditional %128 %130 %129
-%130 = OpLabel
-OpStore %28 %119
-OpStore %30 %120
-OpBranch %129
-%129 = OpLabel
-OpControlBarrier %18 %18 %131
-OpBranch %132
-%132 = OpLabel
-%133 = OpFunctionCall  %2  %62
-%137 = OpAccessChain  %136  %116 %65 %65
-%138 = OpLoad  %20  %137
-%142 = OpAccessChain  %141  %114 %65 %65 %65
-%143 = OpLoad  %12  %142
-%144 = OpMatrixTimesVector  %10  %138 %143
+%93 = OpFunction  %2  None %58
+%92 = OpLabel
+%108 = OpVariable  %109  Function %62
+%110 = OpVariable  %111  Function %25
+%94 = OpAccessChain  %59  %30 %60
+%96 = OpAccessChain  %95  %33 %60
+%98 = OpAccessChain  %97  %36 %60
+%100 = OpAccessChain  %99  %39 %60
+%102 = OpAccessChain  %101  %42 %60
+%104 = OpAccessChain  %103  %45 %60
+%106 = OpAccessChain  %105  %48 %60
+OpBranch %112
+%112 = OpLabel
+%118 = OpLoad  %115  %116
+%121 = OpIEqual  %120  %118 %119
+%122 = OpAll  %3  %121
+OpSelectionMerge %123 None
+OpBranchConditional %122 %124 %123
+%124 = OpLabel
+OpStore %26 %113
+OpStore %28 %114
+OpBranch %123
+%123 = OpLabel
+OpControlBarrier %18 %18 %125
+OpBranch %126
+%126 = OpLabel
+%127 = OpFunctionCall  %2  %57
+%131 = OpAccessChain  %130  %106 %60 %60
+%132 = OpLoad  %20  %131
+%136 = OpAccessChain  %135  %104 %60 %60 %60
+%137 = OpLoad  %12  %136
+%138 = OpMatrixTimesVector  %10  %132 %137
+%139 = OpCompositeExtract  %4  %138 0
+%141 = OpAccessChain  %128  %26 %140
+OpStore %141 %139
+%142 = OpLoad  %15  %102
+%143 = OpLoad  %8  %100
+%144 = OpMatrixTimesVector  %10  %142 %143
 %145 = OpCompositeExtract  %4  %144 0
-%147 = OpAccessChain  %134  %28 %146
+%147 = OpAccessChain  %128  %26 %146
 OpStore %147 %145
-%148 = OpLoad  %15  %112
-%149 = OpLoad  %8  %110
-%150 = OpMatrixTimesVector  %10  %148 %149
-%151 = OpCompositeExtract  %4  %150 0
-%153 = OpAccessChain  %134  %28 %152
+%150 = OpAccessChain  %73  %96 %149 %149
+%151 = OpLoad  %4  %150
+%153 = OpAccessChain  %128  %26 %152
 OpStore %153 %151
-%156 = OpAccessChain  %77  %106 %155 %155
-%157 = OpLoad  %4  %156
-%159 = OpAccessChain  %134  %28 %158
-OpStore %159 %157
-%163 = OpAccessChain  %161  %108 %65 %162
-%164 = OpLoad  %4  %163
-%166 = OpAccessChain  %134  %28 %165
-OpStore %166 %164
-%168 = OpAccessChain  %167  %104 %155
-%169 = OpLoad  %4  %168
-%170 = OpAccessChain  %134  %28 %162
-OpStore %170 %169
-%171 = OpAccessChain  %77  %104 %65 %65
-%172 = OpLoad  %4  %171
-%173 = OpAccessChain  %134  %28 %18
-OpStore %173 %172
-%174 = OpAccessChain  %167  %104 %155
-OpStore %174 %117
-%175 = OpArrayLength  %7  %35 0
-%176 = OpConvertUToF  %4  %175
-%177 = OpAccessChain  %134  %28 %155
-OpStore %177 %176
-OpAtomicStore %30 %27 %178 %18
-OpStore %96 %67
-OpStore %99 %25
+%157 = OpAccessChain  %155  %98 %60 %156
+%158 = OpLoad  %4  %157
+%160 = OpAccessChain  %128  %26 %159
+OpStore %160 %158
+%162 = OpAccessChain  %161  %94 %149
+%163 = OpLoad  %4  %162
+%164 = OpAccessChain  %128  %26 %156
+OpStore %164 %163
+%165 = OpAccessChain  %73  %94 %60 %60
+%166 = OpLoad  %4  %165
+%167 = OpAccessChain  %128  %26 %18
+OpStore %167 %166
+%168 = OpAccessChain  %161  %94 %149
+OpStore %168 %107
+%169 = OpArrayLength  %7  %33 0
+%170 = OpConvertUToF  %4  %169
+%171 = OpAccessChain  %128  %26 %149
+OpStore %171 %170
+OpAtomicStore %28 %172 %173 %18
 OpReturn
 OpFunctionEnd

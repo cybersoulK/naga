@@ -55,6 +55,7 @@ use std::{
     cmp::Ordering,
     fmt,
     fmt::{Error as FmtError, Write},
+    mem,
 };
 use thiserror::Error;
 
@@ -64,13 +65,16 @@ mod features;
 mod keywords;
 
 /// List of supported `core` GLSL versions.
-pub const SUPPORTED_CORE_VERSIONS: &[u16] = &[330, 400, 410, 420, 430, 440, 450];
+pub const SUPPORTED_CORE_VERSIONS: &[u16] = &[140, 150, 330, 400, 410, 420, 430, 440, 450, 460];
 /// List of supported `es` GLSL versions.
 pub const SUPPORTED_ES_VERSIONS: &[u16] = &[300, 310, 320];
 
 /// The suffix of the variable that will hold the calculated clamped level
 /// of detail for bounds checking in `ImageLoad`
 const CLAMPED_LOD_SUFFIX: &str = "_clamped_lod";
+
+pub(crate) const MODF_FUNCTION: &str = "naga_modf";
+pub(crate) const FREXP_FUNCTION: &str = "naga_frexp";
 
 /// Mapping between resources and bindings.
 pub type BindingMap = std::collections::BTreeMap<crate::ResourceBinding, u8>;
@@ -160,6 +164,10 @@ impl Version {
         }
     }
 
+    fn supports_io_locations(&self) -> bool {
+        *self >= Version::Desktop(330) || *self >= Version::new_gles(300)
+    }
+
     /// Checks if the version supports all of the explicit layouts:
     /// - `location=` qualifiers for bindings
     /// - `binding=` qualifiers for resources
@@ -183,6 +191,10 @@ impl Version {
     }
 
     fn supports_integer_functions(&self) -> bool {
+        *self >= Version::Desktop(400) || *self >= Version::new_gles(310)
+    }
+
+    fn supports_frexp_function(&self) -> bool {
         *self >= Version::Desktop(400) || *self >= Version::new_gles(310)
     }
 
@@ -278,12 +290,25 @@ pub struct PipelineOptions {
     pub multiview: Option<std::num::NonZeroU32>,
 }
 
+#[derive(Debug)]
+pub struct VaryingLocation {
+    /// The location of the global.
+    /// This corresponds to `layout(location = ..)` in GLSL.
+    pub location: u32,
+    /// The index which can be used for dual source blending.
+    /// This corresponds to `layout(index = ..)` in GLSL.
+    pub index: u32,
+}
+
 /// Reflection info for texture mappings and uniforms.
+#[derive(Debug)]
 pub struct ReflectionInfo {
     /// Mapping between texture names and variables/samplers.
     pub texture_mapping: crate::FastHashMap<String, TextureMapping>,
     /// Mapping between uniform variables and names.
     pub uniforms: crate::FastHashMap<Handle<crate::GlobalVariable>, String>,
+    /// Mapping between names and attribute locations.
+    pub varying: crate::FastHashMap<String, VaryingLocation>,
 }
 
 /// Mapping between a texture and its sampler, if it exists.
@@ -320,7 +345,7 @@ impl IdGenerator {
 /// Helper wrapper used to get a name for a varying
 ///
 /// Varying have different naming schemes depending on their binding:
-/// - Varyings with builtin bindings get the from [`glsl_built_in`](glsl_built_in).
+/// - Varyings with builtin bindings get the from [`glsl_built_in`].
 /// - Varyings with location bindings are named `_S_location_X` where `S` is a
 ///   prefix identifying which pipeline stage the varying connects, and `X` is
 ///   the location.
@@ -333,6 +358,12 @@ struct VaryingName<'a> {
 impl fmt::Display for VaryingName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.binding {
+            crate::Binding::Location {
+                second_blend_source: true,
+                ..
+            } => {
+                write!(f, "_fs2p_location1",)
+            }
             crate::Binding::Location { location, .. } => {
                 let prefix = match (self.stage, self.output) {
                     (ShaderStage::Compute, _) => unreachable!(),
@@ -450,6 +481,8 @@ pub struct Writer<'a, W> {
     need_bake_expressions: back::NeedBakeExpressions,
     /// How many views to render to, if doing multiview rendering.
     multiview: Option<std::num::NonZeroU32>,
+    /// Mapping of varying variables to their location. Needed for reflections.
+    varying: crate::FastHashMap<String, VaryingLocation>,
 }
 
 impl<'a, W: Write> Writer<'a, W> {
@@ -512,6 +545,7 @@ impl<'a, W: Write> Writer<'a, W> {
             block_id: IdGenerator::default(),
             named_expressions: Default::default(),
             need_bake_expressions: Default::default(),
+            varying: Default::default(),
         };
 
         // Find all features required to print this module
@@ -625,6 +659,65 @@ impl<'a, W: Write> Writer<'a, W> {
             }
         }
 
+        // Write functions to create special types.
+        for (type_key, struct_ty) in self.module.special_types.predeclared_types.iter() {
+            match type_key {
+                &crate::PredeclaredType::ModfResult { size, width }
+                | &crate::PredeclaredType::FrexpResult { size, width } => {
+                    let arg_type_name_owner;
+                    let arg_type_name = if let Some(size) = size {
+                        arg_type_name_owner =
+                            format!("{}vec{}", if width == 8 { "d" } else { "" }, size as u8);
+                        &arg_type_name_owner
+                    } else if width == 8 {
+                        "double"
+                    } else {
+                        "float"
+                    };
+
+                    let other_type_name_owner;
+                    let (defined_func_name, called_func_name, other_type_name) =
+                        if matches!(type_key, &crate::PredeclaredType::ModfResult { .. }) {
+                            (MODF_FUNCTION, "modf", arg_type_name)
+                        } else {
+                            let other_type_name = if let Some(size) = size {
+                                other_type_name_owner = format!("ivec{}", size as u8);
+                                &other_type_name_owner
+                            } else {
+                                "int"
+                            };
+                            (FREXP_FUNCTION, "frexp", other_type_name)
+                        };
+
+                    let struct_name = &self.names[&NameKey::Type(*struct_ty)];
+
+                    writeln!(self.out)?;
+                    if !self.options.version.supports_frexp_function()
+                        && matches!(type_key, &crate::PredeclaredType::FrexpResult { .. })
+                    {
+                        writeln!(
+                            self.out,
+                            "{struct_name} {defined_func_name}({arg_type_name} arg) {{
+    {other_type_name} other = arg == {arg_type_name}(0) ? {other_type_name}(0) : {other_type_name}({arg_type_name}(1) + log2(arg));
+    {arg_type_name} fract = arg * exp2({arg_type_name}(-other));
+    return {struct_name}(fract, other);
+}}",
+                        )?;
+                    } else {
+                        writeln!(
+                            self.out,
+                            "{struct_name} {defined_func_name}({arg_type_name} arg) {{
+    {other_type_name} other;
+    {arg_type_name} fract = {called_func_name}(arg, other);
+    return {struct_name}(fract, other);
+}}",
+                        )?;
+                    }
+                }
+                &crate::PredeclaredType::AtomicCompareExchangeWeakResult { .. } => {}
+            }
+        }
+
         // Write all named constants
         let mut constants = self
             .module
@@ -694,7 +787,7 @@ impl<'a, W: Write> Writer<'a, W> {
                             write!(self.out, "binding = {binding}")?;
                         }
                         if let Some((format, _)) = storage_format_access {
-                            let format_str = glsl_storage_format(format);
+                            let format_str = glsl_storage_format(format)?;
                             let separator = match layout_binding {
                                 Some(_) => ",",
                                 None => "",
@@ -754,6 +847,19 @@ impl<'a, W: Write> Writer<'a, W> {
             }
 
             let fun_info = &self.info[handle];
+
+            // Skip functions that that are not compatible with this entry point's stage.
+            //
+            // When validation is enabled, it rejects modules whose entry points try to call
+            // incompatible functions, so if we got this far, then any functions incompatible
+            // with our selected entry point must not be used.
+            //
+            // When validation is disabled, `fun_info.available_stages` is always just
+            // `ShaderStages::all()`, so this will write all functions in the module, and
+            // the downstream GLSL compiler will catch any problems.
+            if !fun_info.available_stages.contains(ep_info.available_stages) {
+                continue;
+            }
 
             // Write the function
             self.write_function(back::FunctionType::Function(handle), function, fun_info)?;
@@ -921,9 +1027,16 @@ impl<'a, W: Write> Writer<'a, W> {
             Ic::Storage { format, .. } => ("image", format.into(), "", ""),
         };
 
+        let precision = if self.options.version.is_es() {
+            "highp "
+        } else {
+            ""
+        };
+
         write!(
             self.out,
-            "highp {}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}",
+            precision,
             glsl_scalar(kind, 4)?.prefix,
             base,
             glsl_dimension(dim),
@@ -1057,7 +1170,8 @@ impl<'a, W: Write> Writer<'a, W> {
         let ty_name = &self.names[&NameKey::Type(global.ty)];
         let block_name = format!(
             "{}_block_{}{:?}",
-            ty_name,
+            // avoid double underscores as they are reserved in GLSL
+            ty_name.trim_end_matches('_'),
             self.block_id.generate(),
             self.entry_point.stage,
         );
@@ -1235,12 +1349,13 @@ impl<'a, W: Write> Writer<'a, W> {
             Some(binding) => binding,
         };
 
-        let (location, interpolation, sampling) = match *binding {
+        let (location, interpolation, sampling, second_blend_source) = match *binding {
             crate::Binding::Location {
                 location,
                 interpolation,
                 sampling,
-            } => (location, interpolation, sampling),
+                second_blend_source,
+            } => (location, interpolation, sampling, second_blend_source),
             crate::Binding::BuiltIn(built_in) => {
                 if let crate::BuiltIn::Position { invariant: true } = built_in {
                     match (self.options.version, self.entry_point.stage) {
@@ -1280,9 +1395,25 @@ impl<'a, W: Write> Writer<'a, W> {
         };
 
         // Write the I/O locations, if allowed
-        if self.options.version.supports_explicit_locations() || !emit_interpolation_and_auxiliary {
-            write!(self.out, "layout(location = {location}) ")?;
-        }
+        let io_location = if self.options.version.supports_explicit_locations()
+            || !emit_interpolation_and_auxiliary
+        {
+            if self.options.version.supports_io_locations() {
+                if second_blend_source {
+                    write!(self.out, "layout(location = {location}, index = 1) ")?;
+                } else {
+                    write!(self.out, "layout(location = {location}) ")?;
+                }
+                None
+            } else {
+                Some(VaryingLocation {
+                    location,
+                    index: second_blend_source as u32,
+                })
+            }
+        } else {
+            None
+        };
 
         // Write the interpolation qualifier.
         if let Some(interp) = interpolation {
@@ -1318,12 +1449,17 @@ impl<'a, W: Write> Writer<'a, W> {
                 location,
                 interpolation: None,
                 sampling: None,
+                second_blend_source,
             },
             stage: self.entry_point.stage,
             output,
             targetting_webgl: self.options.version.is_webgl(),
         };
         writeln!(self.out, " {vname};")?;
+
+        if let Some(location) = io_location {
+            self.varying.insert(vname.to_string(), location);
+        }
 
         Ok(())
     }
@@ -1412,7 +1548,7 @@ impl<'a, W: Write> Writer<'a, W> {
                         ..
                     } = this.module.types[arg.ty].inner
                     {
-                        write!(this.out, "layout({}) ", glsl_storage_format(format))?;
+                        write!(this.out, "layout({}) ", glsl_storage_format(format)?)?;
                     }
 
                     // write the type
@@ -1526,7 +1662,7 @@ impl<'a, W: Write> Writer<'a, W> {
 
                 // Write the constant
                 // `write_constant` adds no trailing or leading space/newline
-                self.write_const_expr(init)?;
+                self.write_expr(init, &ctx)?;
             } else if is_value_init_supported(self.module, local.ty) {
                 write!(self.out, " = ")?;
                 self.write_zero_init_value(local.ty)?;
@@ -1630,7 +1766,7 @@ impl<'a, W: Write> Writer<'a, W> {
         arg: Handle<crate::Expression>,
         arg1: Handle<crate::Expression>,
         size: usize,
-        ctx: &back::FunctionCtx<'_>,
+        ctx: &back::FunctionCtx,
     ) -> BackendResult {
         // Write parantheses around the dot product expression to prevent operators
         // with different precedences from applying earlier.
@@ -1736,8 +1872,7 @@ impl<'a, W: Write> Writer<'a, W> {
             // This is where we can generate intermediate constants for some expression types.
             Statement::Emit(ref range) => {
                 for handle in range.clone() {
-                    let info = &ctx.info[handle];
-                    let ptr_class = info.ty.inner_with(&self.module.types).pointer_space();
+                    let ptr_class = ctx.resolve_type(handle, &self.module.types).pointer_space();
                     let expr_name = if ptr_class.is_some() {
                         // GLSL can't save a pointer-valued expression in a variable,
                         // but we shouldn't ever need to: they should never be named expressions,
@@ -1767,7 +1902,7 @@ impl<'a, W: Write> Writer<'a, W> {
                         if let TypeInner::Image {
                             class: crate::ImageClass::Sampled { .. },
                             ..
-                        } = *ctx.info[image].ty.inner_with(&self.module.types)
+                        } = *ctx.resolve_type(image, &self.module.types)
                         {
                             if let proc::BoundsCheckPolicy::Restrict = self.policies.image_load {
                                 write!(self.out, "{level}")?;
@@ -2133,7 +2268,7 @@ impl<'a, W: Write> Writer<'a, W> {
             } => {
                 write!(self.out, "{level}")?;
                 let res_name = format!("{}{}", back::BAKE_PREFIX, result.index());
-                let res_ty = ctx.info[result].ty.inner_with(&self.module.types);
+                let res_ty = ctx.resolve_type(result, &self.module.types);
                 self.write_value_type(res_ty)?;
                 write!(self.out, " {res_name} = ")?;
                 self.named_expressions.insert(result, res_name);
@@ -2175,9 +2310,12 @@ impl<'a, W: Write> Writer<'a, W> {
     /// [`Expression`]: crate::Expression
     /// [`Module`]: crate::Module
     fn write_const_expr(&mut self, expr: Handle<crate::Expression>) -> BackendResult {
-        self.write_possibly_const_expr(expr, &self.module.const_expressions, |writer, expr| {
-            writer.write_const_expr(expr)
-        })
+        self.write_possibly_const_expr(
+            expr,
+            &self.module.const_expressions,
+            |expr| &self.info[expr],
+            |writer, expr| writer.write_const_expr(expr),
+        )
     }
 
     /// Write [`Expression`] variants that can occur in both runtime and const expressions.
@@ -2198,13 +2336,15 @@ impl<'a, W: Write> Writer<'a, W> {
     /// Adds no newlines or leading/trailing whitespace
     ///
     /// [`Expression`]: crate::Expression
-    fn write_possibly_const_expr<E>(
-        &mut self,
+    fn write_possibly_const_expr<'w, I, E>(
+        &'w mut self,
         expr: Handle<crate::Expression>,
         expressions: &crate::Arena<crate::Expression>,
+        info: I,
         write_expression: E,
     ) -> BackendResult
     where
+        I: Fn(Handle<crate::Expression>) -> &'w proc::TypeResolution,
         E: Fn(&mut Self, Handle<crate::Expression>) -> BackendResult,
     {
         use crate::Expression;
@@ -2252,6 +2392,14 @@ impl<'a, W: Write> Writer<'a, W> {
                 }
                 write!(self.out, ")")?
             }
+            // `Splat` needs to actually write down a vector, it's not always inferred in GLSL.
+            Expression::Splat { size: _, value } => {
+                let resolved = info(expr).inner_with(&self.module.types);
+                self.write_value_type(resolved)?;
+                write!(self.out, "(")?;
+                write_expression(self, value)?;
+                write!(self.out, ")")?
+            }
             _ => unreachable!(),
         }
 
@@ -2265,7 +2413,7 @@ impl<'a, W: Write> Writer<'a, W> {
     fn write_expr(
         &mut self,
         expr: Handle<crate::Expression>,
-        ctx: &back::FunctionCtx<'_>,
+        ctx: &back::FunctionCtx,
     ) -> BackendResult {
         use crate::Expression;
 
@@ -2278,10 +2426,14 @@ impl<'a, W: Write> Writer<'a, W> {
             Expression::Literal(_)
             | Expression::Constant(_)
             | Expression::ZeroValue(_)
-            | Expression::Compose { .. } => {
-                self.write_possibly_const_expr(expr, ctx.expressions, |writer, expr| {
-                    writer.write_expr(expr, ctx)
-                })?;
+            | Expression::Compose { .. }
+            | Expression::Splat { .. } => {
+                self.write_possibly_const_expr(
+                    expr,
+                    ctx.expressions,
+                    |expr| &ctx.info[expr].ty,
+                    |writer, expr| writer.write_expr(expr, ctx),
+                )?;
             }
             // `Access` is applied to arrays, vectors and matrices and is written as indexing
             Expression::Access { base, index } => {
@@ -2327,14 +2479,6 @@ impl<'a, W: Write> Writer<'a, W> {
                     }
                     ref other => return Err(Error::Custom(format!("Cannot index {other:?}"))),
                 }
-            }
-            // `Splat` needs to actually write down a vector, it's not always inferred in GLSL.
-            Expression::Splat { size: _, value } => {
-                let resolved = ctx.info[expr].ty.inner_with(&self.module.types);
-                self.write_value_type(resolved)?;
-                write!(self.out, "(")?;
-                self.write_expr(value, ctx)?;
-                write!(self.out, ")")?
             }
             // `Swizzle` adds a few letters behind the dot.
             Expression::Swizzle {
@@ -2383,7 +2527,7 @@ impl<'a, W: Write> Writer<'a, W> {
                 level,
                 depth_ref,
             } => {
-                let dim = match *ctx.info[image].ty.inner_with(&self.module.types) {
+                let dim = match *ctx.resolve_type(image, &self.module.types) {
                     TypeInner::Image { dim, .. } => dim,
                     _ => unreachable!(),
                 };
@@ -2444,7 +2588,7 @@ impl<'a, W: Write> Writer<'a, W> {
 
                 // We need to get the coordinates vector size to later build a vector that's `size + 1`
                 // if `depth_ref` is some, if it isn't a vector we panic as that's not a valid expression
-                let mut coord_dim = match *ctx.info[coordinate].ty.inner_with(&self.module.types) {
+                let mut coord_dim = match *ctx.resolve_type(coordinate, &self.module.types) {
                     TypeInner::Vector { size, .. } => size as u8,
                     TypeInner::Scalar { .. } => 1,
                     _ => unreachable!(),
@@ -2571,7 +2715,7 @@ impl<'a, W: Write> Writer<'a, W> {
                 use crate::ImageClass;
 
                 // This will only panic if the module is invalid
-                let (dim, class) = match *ctx.info[image].ty.inner_with(&self.module.types) {
+                let (dim, class) = match *ctx.resolve_type(image, &self.module.types) {
                     TypeInner::Image {
                         dim,
                         arrayed: _,
@@ -2603,7 +2747,7 @@ impl<'a, W: Write> Writer<'a, W> {
                                 self.write_expr(image, ctx)?;
                                 if let Some(expr) = level {
                                     let cast_to_int = matches!(
-                                        *ctx.info[expr].ty.inner_with(&self.module.types),
+                                        *ctx.resolve_type(expr, &self.module.types),
                                         crate::TypeInner::Scalar {
                                             kind: crate::ScalarKind::Uint,
                                             ..
@@ -2674,38 +2818,18 @@ impl<'a, W: Write> Writer<'a, W> {
 
                 write!(self.out, ")")?;
             }
-            // `Unary` is pretty straightforward
-            // "-" - for `Negate`
-            // "~" - for `Not` if it's an integer
-            // "!" - for `Not` if it's a boolean
-            //
-            // We also wrap the everything in parentheses to avoid precedence issues
             Expression::Unary { op, expr } => {
-                use crate::{ScalarKind as Sk, UnaryOperator as Uo};
-
-                let ty = ctx.info[expr].ty.inner_with(&self.module.types);
-
-                match *ty {
-                    TypeInner::Vector { kind: Sk::Bool, .. } => {
-                        write!(self.out, "not(")?;
+                let operator_or_fn = match op {
+                    crate::UnaryOperator::Negate => "-",
+                    crate::UnaryOperator::LogicalNot => {
+                        match *ctx.resolve_type(expr, &self.module.types) {
+                            TypeInner::Vector { .. } => "not",
+                            _ => "!",
+                        }
                     }
-                    _ => {
-                        let operator = match op {
-                            Uo::Negate => "-",
-                            Uo::Not => match ty.scalar_kind() {
-                                Some(Sk::Sint) | Some(Sk::Uint) => "~",
-                                Some(Sk::Bool) => "!",
-                                ref other => {
-                                    return Err(Error::Custom(format!(
-                                        "Cannot apply not to type {other:?}"
-                                    )))
-                                }
-                            },
-                        };
-
-                        write!(self.out, "{operator}(")?;
-                    }
-                }
+                    crate::UnaryOperator::BitwiseNot => "~",
+                };
+                write!(self.out, "{operator_or_fn}(")?;
 
                 self.write_expr(expr, ctx)?;
 
@@ -2724,8 +2848,8 @@ impl<'a, W: Write> Writer<'a, W> {
                 // implemented as a function call
                 use crate::{BinaryOperator as Bo, ScalarKind as Sk, TypeInner as Ti};
 
-                let left_inner = ctx.info[left].ty.inner_with(&self.module.types);
-                let right_inner = ctx.info[right].ty.inner_with(&self.module.types);
+                let left_inner = ctx.resolve_type(left, &self.module.types);
+                let right_inner = ctx.resolve_type(right, &self.module.types);
 
                 let function = match (left_inner, right_inner) {
                     (&Ti::Vector { kind, .. }, &Ti::Vector { .. }) => match op {
@@ -2854,7 +2978,7 @@ impl<'a, W: Write> Writer<'a, W> {
                 accept,
                 reject,
             } => {
-                let cond_ty = ctx.info[condition].ty.inner_with(&self.module.types);
+                let cond_ty = ctx.resolve_type(condition, &self.module.types);
                 let vec_select = if let TypeInner::Vector { .. } = *cond_ty {
                     true
                 } else {
@@ -2913,12 +3037,8 @@ impl<'a, W: Write> Writer<'a, W> {
                 use crate::RelationalFunction as Rf;
 
                 let fun_name = match fun {
-                    // There's no specific function for this but we can invert the result of `isinf`
-                    Rf::IsFinite => "!isinf",
                     Rf::IsInf => "isinf",
                     Rf::IsNan => "isnan",
-                    // There's also no function for this but we can invert `isnan`
-                    Rf::IsNormal => "!isnan",
                     Rf::All => "all",
                     Rf::Any => "any",
                 };
@@ -2948,7 +3068,7 @@ impl<'a, W: Write> Writer<'a, W> {
 
                         self.write_expr(arg, ctx)?;
 
-                        match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                        match *ctx.resolve_type(arg, &self.module.types) {
                             crate::TypeInner::Vector { size, .. } => write!(
                                 self.out,
                                 ", vec{}(0.0), vec{0}(1.0)",
@@ -2985,8 +3105,8 @@ impl<'a, W: Write> Writer<'a, W> {
                     Mf::Round => "roundEven",
                     Mf::Fract => "fract",
                     Mf::Trunc => "trunc",
-                    Mf::Modf => "modf",
-                    Mf::Frexp => "frexp",
+                    Mf::Modf => MODF_FUNCTION,
+                    Mf::Frexp => FREXP_FUNCTION,
                     Mf::Ldexp => "ldexp",
                     // exponent
                     Mf::Exp => "exp",
@@ -2995,7 +3115,7 @@ impl<'a, W: Write> Writer<'a, W> {
                     Mf::Log2 => "log2",
                     Mf::Pow => "pow",
                     // geometry
-                    Mf::Dot => match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                    Mf::Dot => match *ctx.resolve_type(arg, &self.module.types) {
                         crate::TypeInner::Vector {
                             kind: crate::ScalarKind::Float,
                             ..
@@ -3051,7 +3171,7 @@ impl<'a, W: Write> Writer<'a, W> {
                     Mf::Determinant => "determinant",
                     // bits
                     Mf::CountTrailingZeros => {
-                        match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                        match *ctx.resolve_type(arg, &self.module.types) {
                             crate::TypeInner::Vector { size, kind, .. } => {
                                 let s = back::vector_size_str(size);
                                 if let crate::ScalarKind::Uint = kind {
@@ -3081,7 +3201,7 @@ impl<'a, W: Write> Writer<'a, W> {
                     }
                     Mf::CountLeadingZeros => {
                         if self.options.version.supports_integer_functions() {
-                            match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                            match *ctx.resolve_type(arg, &self.module.types) {
                                 crate::TypeInner::Vector { size, kind, .. } => {
                                     let s = back::vector_size_str(size);
 
@@ -3112,7 +3232,7 @@ impl<'a, W: Write> Writer<'a, W> {
                                 _ => unreachable!(),
                             };
                         } else {
-                            match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                            match *ctx.resolve_type(arg, &self.module.types) {
                                 crate::TypeInner::Vector { size, kind, .. } => {
                                     let s = back::vector_size_str(size);
 
@@ -3185,7 +3305,7 @@ impl<'a, W: Write> Writer<'a, W> {
 
                 // Check if the argument is an unsigned integer and return the vector size
                 // in case it's a vector
-                let maybe_uint_size = match *ctx.info[arg].ty.inner_with(&self.module.types) {
+                let maybe_uint_size = match *ctx.resolve_type(arg, &self.module.types) {
                     crate::TypeInner::Scalar {
                         kind: crate::ScalarKind::Uint,
                         ..
@@ -3272,7 +3392,7 @@ impl<'a, W: Write> Writer<'a, W> {
                 kind: target_kind,
                 convert,
             } => {
-                let inner = ctx.info[expr].ty.inner_with(&self.module.types);
+                let inner = ctx.resolve_type(expr, &self.module.types);
                 match convert {
                     Some(width) => {
                         // this is similar to `write_type`, but with the target kind
@@ -3438,7 +3558,7 @@ impl<'a, W: Write> Writer<'a, W> {
             }
             // Otherwise write just the expression (and the 1D hack if needed)
             None => {
-                let uvec_size = match *ctx.info[coordinate].ty.inner_with(&self.module.types) {
+                let uvec_size = match *ctx.resolve_type(coordinate, &self.module.types) {
                     TypeInner::Scalar {
                         kind: crate::ScalarKind::Uint,
                         ..
@@ -3486,7 +3606,7 @@ impl<'a, W: Write> Writer<'a, W> {
         // so we don't need to generate bounds checks (OpenGL 4.2 Core §3.9.20)
 
         // This will only panic if the module is invalid
-        let dim = match *ctx.info[image].ty.inner_with(&self.module.types) {
+        let dim = match *ctx.resolve_type(image, &self.module.types) {
             TypeInner::Image { dim, .. } => dim,
             _ => unreachable!(),
         };
@@ -3549,7 +3669,7 @@ impl<'a, W: Write> Writer<'a, W> {
         // in bounds (`ReadZeroSkipWrite`) or make them a valid texel (`Restrict`).
 
         // This will only panic if the module is invalid
-        let (dim, class) = match *ctx.info[image].ty.inner_with(&self.module.types) {
+        let (dim, class) = match *ctx.resolve_type(image, &self.module.types) {
             TypeInner::Image {
                 dim,
                 arrayed: _,
@@ -3814,8 +3934,7 @@ impl<'a, W: Write> Writer<'a, W> {
             }
         }
 
-        let base_ty_res = &ctx.info[named].ty;
-        let resolved = base_ty_res.inner_with(&self.module.types);
+        let resolved = ctx.resolve_type(named, &self.module.types);
 
         write!(self.out, " {name}")?;
         if let TypeInner::Array { base, size, .. } = *resolved {
@@ -3925,7 +4044,7 @@ impl<'a, W: Write> Writer<'a, W> {
     }
 
     /// Helper method used to produce the reflection info that's returned to the user
-    fn collect_reflection_info(&self) -> Result<ReflectionInfo, Error> {
+    fn collect_reflection_info(&mut self) -> Result<ReflectionInfo, Error> {
         use std::collections::hash_map::Entry;
         let info = self.info.get_entry_point(self.entry_point_idx as usize);
         let mut texture_mapping = crate::FastHashMap::default();
@@ -3982,11 +4101,12 @@ impl<'a, W: Write> Writer<'a, W> {
         Ok(ReflectionInfo {
             texture_mapping,
             uniforms,
+            varying: mem::take(&mut self.varying),
         })
     }
 }
 
-/// Structure returned by [`glsl_scalar`](glsl_scalar)
+/// Structure returned by [`glsl_scalar`]
 ///
 /// It contains both a prefix used in other types and the full type name
 struct ScalarString<'a> {
@@ -3998,7 +4118,7 @@ struct ScalarString<'a> {
 
 /// Helper function that returns scalar related strings
 ///
-/// Check [`ScalarString`](ScalarString) for the information provided
+/// Check [`ScalarString`] for the information provided
 ///
 /// # Errors
 /// If a [`Float`](crate::ScalarKind::Float) with an width that isn't 4 or 8
@@ -4134,10 +4254,10 @@ const fn glsl_dimension(dim: crate::ImageDimension) -> &'static str {
 }
 
 /// Helper function that returns the glsl storage format string of [`StorageFormat`](crate::StorageFormat)
-const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
+fn glsl_storage_format(format: crate::StorageFormat) -> Result<&'static str, Error> {
     use crate::StorageFormat as Sf;
 
-    match format {
+    Ok(match format {
         Sf::R8Unorm => "r8",
         Sf::R8Snorm => "r8_snorm",
         Sf::R8Uint => "r8ui",
@@ -4159,7 +4279,8 @@ const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
         Sf::Rgba8Snorm => "rgba8_snorm",
         Sf::Rgba8Uint => "rgba8ui",
         Sf::Rgba8Sint => "rgba8i",
-        Sf::Rgb10a2Unorm => "rgb10_a2ui",
+        Sf::Rgb10a2Uint => "rgb10_a2ui",
+        Sf::Rgb10a2Unorm => "rgb10_a2",
         Sf::Rg11b10Float => "r11f_g11f_b10f",
         Sf::Rg32Uint => "rg32ui",
         Sf::Rg32Sint => "rg32i",
@@ -4176,7 +4297,13 @@ const fn glsl_storage_format(format: crate::StorageFormat) -> &'static str {
         Sf::Rg16Snorm => "rg16_snorm",
         Sf::Rgba16Unorm => "rgba16",
         Sf::Rgba16Snorm => "rgba16_snorm",
-    }
+
+        Sf::Bgra8Unorm => {
+            return Err(Error::Custom(
+                "Support format BGRA8 is not implemented".into(),
+            ))
+        }
+    })
 }
 
 fn is_value_init_supported(module: &crate::Module, ty: Handle<crate::Type>) -> bool {

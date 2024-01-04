@@ -30,14 +30,14 @@ var<storage, read_write> particlesDst: Particles;
 fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     var vPos: vec2<f32>;
     var vVel: vec2<f32>;
-    var cMass: vec2<f32>;
-    var cVel: vec2<f32>;
-    var colVel: vec2<f32>;
-    var cMassCount: i32;
-    var cVelCount: i32;
+    var cMass: vec2<f32> = vec2<f32>(0.0, 0.0);
+    var cVel: vec2<f32> = vec2<f32>(0.0, 0.0);
+    var colVel: vec2<f32> = vec2<f32>(0.0, 0.0);
+    var cMassCount: i32 = 0;
+    var cVelCount: i32 = 0;
     var pos: vec2<f32>;
     var vel: vec2<f32>;
-    var i: u32;
+    var i: u32 = 0u;
 
     let index = global_invocation_id.x;
     if (index >= NUM_PARTICLES) {
@@ -47,12 +47,6 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     vPos = _e8;
     let _e14 = particlesSrc.particles[index].vel;
     vVel = _e14;
-    cMass = vec2<f32>(0.0, 0.0);
-    cVel = vec2<f32>(0.0, 0.0);
-    colVel = vec2<f32>(0.0, 0.0);
-    cMassCount = 0;
-    cVelCount = 0;
-    i = 0u;
     loop {
         let _e36 = i;
         if (_e36 >= NUM_PARTICLES) {
@@ -107,13 +101,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         let _e97 = cMass;
         let _e98 = cMassCount;
         let _e102 = vPos;
-        cMass = ((_e97 / vec2<f32>(f32(_e98))) - _e102);
+        cMass = ((_e97 / vec2(f32(_e98))) - _e102);
     }
     let _e104 = cVelCount;
     if (_e104 > 0) {
         let _e107 = cVel;
         let _e108 = cVelCount;
-        cVel = (_e107 / vec2<f32>(f32(_e108)));
+        cVel = (_e107 / vec2(f32(_e108)));
     }
     let _e112 = vVel;
     let _e113 = cMass;

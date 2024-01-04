@@ -7,7 +7,7 @@ use super::{
     Error, ErrorKind, Frontend, Result,
 };
 use crate::{
-    BinaryOperator, Block, DerivativeAxis as Axis, DerivativeControl as Ctrl, Expression, Handle,
+    BinaryOperator, DerivativeAxis as Axis, DerivativeControl as Ctrl, Expression, Handle,
     ImageClass, ImageDimension as Dim, ImageQuery, MathFunction, Module, RelationalFunction,
     SampleLevel, ScalarKind as Sk, Span, Type, TypeInner, UnaryOperator, VectorSize,
 };
@@ -844,7 +844,7 @@ fn inject_standard_builtins(
                 let fun = match name {
                     "all" => MacroCall::Relational(RelationalFunction::All),
                     "any" => MacroCall::Relational(RelationalFunction::Any),
-                    "not" => MacroCall::Unary(UnaryOperator::Not),
+                    "not" => MacroCall::Unary(UnaryOperator::LogicalNot),
                     _ => unreachable!(),
                 };
 
@@ -1280,14 +1280,14 @@ fn inject_common_builtin(
                     0b10 => Some(VectorSize::Tri),
                     _ => Some(VectorSize::Quad),
                 };
-                let ty = || match size {
+                let ty = |kind| match size {
                     Some(size) => TypeInner::Vector {
                         size,
-                        kind: Sk::Float,
+                        kind,
                         width: float_width,
                     },
                     None => TypeInner::Scalar {
-                        kind: Sk::Float,
+                        kind,
                         width: float_width,
                     },
                 };
@@ -1300,9 +1300,15 @@ fn inject_common_builtin(
                     _ => unreachable!(),
                 };
 
+                let second_kind = if fun == MacroCall::MathFunction(MathFunction::Ldexp) {
+                    Sk::Sint
+                } else {
+                    Sk::Float
+                };
+
                 declaration
                     .overloads
-                    .push(module.add_builtin(vec![ty(), ty()], fun))
+                    .push(module.add_builtin(vec![ty(Sk::Float), ty(second_kind)], fun))
             }
         }
         "transpose" => {
@@ -1402,62 +1408,8 @@ fn inject_common_builtin(
                 declaration.overloads.push(module.add_builtin(args, fun))
             }
         }
-        "modf" | "frexp" => {
-            // bits layout
-            // bit 0 through 1 - dims
-            for bits in 0..0b100 {
-                let size = match bits {
-                    0b00 => None,
-                    0b01 => Some(VectorSize::Bi),
-                    0b10 => Some(VectorSize::Tri),
-                    _ => Some(VectorSize::Quad),
-                };
-
-                let ty = module.types.insert(
-                    Type {
-                        name: None,
-                        inner: match size {
-                            Some(size) => TypeInner::Vector {
-                                size,
-                                kind: Sk::Float,
-                                width: float_width,
-                            },
-                            None => TypeInner::Scalar {
-                                kind: Sk::Float,
-                                width: float_width,
-                            },
-                        },
-                    },
-                    Span::default(),
-                );
-
-                let parameters = vec![ty, ty];
-
-                let fun = match name {
-                    "modf" => MacroCall::MathFunction(MathFunction::Modf),
-                    "frexp" => MacroCall::MathFunction(MathFunction::Frexp),
-                    _ => unreachable!(),
-                };
-
-                declaration.overloads.push(Overload {
-                    parameters,
-                    parameters_info: vec![
-                        ParameterInfo {
-                            qualifier: ParameterQualifier::In,
-                            depth: false,
-                        },
-                        ParameterInfo {
-                            qualifier: ParameterQualifier::Out,
-                            depth: false,
-                        },
-                    ],
-                    kind: FunctionKind::Macro(fun),
-                    defined: false,
-                    internal: true,
-                    void: false,
-                })
-            }
-        }
+        // TODO: https://github.com/gfx-rs/naga/issues/2526
+        // "modf" | "frexp" => { ... }
         "cross" => {
             let args = vec![
                 TypeInner::Vector {
@@ -1678,7 +1630,6 @@ impl MacroCall {
         &self,
         frontend: &mut Frontend,
         ctx: &mut Context,
-        body: &mut Block,
         args: &mut [Handle<Expression>],
         meta: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1688,14 +1639,8 @@ impl MacroCall {
                 args[0]
             }
             MacroCall::SamplerShadow => {
-                sampled_to_depth(
-                    &mut frontend.module,
-                    ctx,
-                    args[0],
-                    meta,
-                    &mut frontend.errors,
-                );
-                frontend.invalidate_expression(ctx, args[0], meta)?;
+                sampled_to_depth(ctx, args[0], meta, &mut frontend.errors);
+                ctx.invalidate_expression(args[0], meta)?;
                 ctx.samplers.insert(args[0], args[1]);
                 args[0]
             }
@@ -1708,7 +1653,7 @@ impl MacroCall {
                 let mut coords = args[1];
 
                 if proj {
-                    let size = match *frontend.resolve_type(ctx, coords, meta)? {
+                    let size = match *ctx.resolve_type(coords, meta)? {
                         TypeInner::Vector { size, .. } => size,
                         _ => unreachable!(),
                     };
@@ -1718,8 +1663,7 @@ impl MacroCall {
                             index: size as u32 - 1,
                         },
                         Span::default(),
-                        body,
-                    );
+                    )?;
                     let left = if let VectorSize::Bi = size {
                         ctx.add_expression(
                             Expression::AccessIndex {
@@ -1727,8 +1671,7 @@ impl MacroCall {
                                 index: 0,
                             },
                             Span::default(),
-                            body,
-                        )
+                        )?
                     } else {
                         let size = match size {
                             VectorSize::Tri => VectorSize::Bi,
@@ -1737,9 +1680,8 @@ impl MacroCall {
                         right = ctx.add_expression(
                             Expression::Splat { size, value: right },
                             Span::default(),
-                            body,
-                        );
-                        ctx.vector_resize(size, coords, Span::default(), body)
+                        )?;
+                        ctx.vector_resize(size, coords, Span::default())?
                     };
                     coords = ctx.add_expression(
                         Expression::Binary {
@@ -1748,13 +1690,11 @@ impl MacroCall {
                             right,
                         },
                         Span::default(),
-                        body,
-                    );
+                    )?;
                 }
 
                 let extra = args.get(2).copied();
-                let comps =
-                    frontend.coordinate_components(ctx, args[0], coords, extra, meta, body)?;
+                let comps = frontend.coordinate_components(ctx, args[0], coords, extra, meta)?;
 
                 let mut num_args = 2;
 
@@ -1801,7 +1741,7 @@ impl MacroCall {
                     true => {
                         let offset_arg = args[num_args];
                         num_args += 1;
-                        match frontend.solve_constant(ctx, offset_arg, meta) {
+                        match ctx.lift_up_const_expression(offset_arg) {
                             Ok(v) => Some(v),
                             Err(e) => {
                                 frontend.errors.push(e);
@@ -1820,7 +1760,7 @@ impl MacroCall {
                         .map_or(SampleLevel::Auto, SampleLevel::Bias);
                 }
 
-                texture_call(ctx, args[0], level, comps, texture_offset, body, meta)?
+                texture_call(ctx, args[0], level, comps, texture_offset, meta)?
             }
 
             MacroCall::TextureSize { arrayed } => {
@@ -1832,20 +1772,18 @@ impl MacroCall {
                         },
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
 
                 if arrayed {
                     let mut components = Vec::with_capacity(4);
 
-                    let size = match *frontend.resolve_type(ctx, expr, meta)? {
+                    let size = match *ctx.resolve_type(expr, meta)? {
                         TypeInner::Vector { size: ori_size, .. } => {
                             for index in 0..(ori_size as u32) {
                                 components.push(ctx.add_expression(
                                     Expression::AccessIndex { base: expr, index },
                                     Span::default(),
-                                    body,
-                                ))
+                                )?)
                             }
 
                             match ori_size {
@@ -1865,10 +1803,9 @@ impl MacroCall {
                             query: ImageQuery::NumLayers,
                         },
                         Span::default(),
-                        body,
-                    ));
+                    )?);
 
-                    let ty = frontend.module.types.insert(
+                    let ty = ctx.module.types.insert(
                         Type {
                             name: None,
                             inner: TypeInner::Vector {
@@ -1880,7 +1817,7 @@ impl MacroCall {
                         Span::default(),
                     );
 
-                    expr = ctx.add_expression(Expression::Compose { components, ty }, meta, body)
+                    expr = ctx.add_expression(Expression::Compose { components, ty }, meta)?
                 }
 
                 ctx.add_expression(
@@ -1890,12 +1827,10 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::ImageLoad { multi } => {
-                let comps =
-                    frontend.coordinate_components(ctx, args[0], args[1], None, meta, body)?;
+                let comps = frontend.coordinate_components(ctx, args[0], args[1], None, meta)?;
                 let (sample, level) = match (multi, args.get(2)) {
                     (_, None) => (None, None),
                     (true, Some(&arg)) => (Some(arg), None),
@@ -1910,14 +1845,12 @@ impl MacroCall {
                         level,
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::ImageStore => {
-                let comps =
-                    frontend.coordinate_components(ctx, args[0], args[1], None, meta, body)?;
-                ctx.emit_restart(body);
-                body.push(
+                let comps = frontend.coordinate_components(ctx, args[0], args[1], None, meta)?;
+                ctx.emit_restart();
+                ctx.body.push(
                     crate::Statement::ImageStore {
                         image: args[0],
                         coordinate: comps.coordinate,
@@ -1937,8 +1870,7 @@ impl MacroCall {
                     arg3: args.get(3).copied(),
                 },
                 Span::default(),
-                body,
-            ),
+            )?,
             mc @ (MacroCall::FindLsbUint | MacroCall::FindMsbUint) => {
                 let fun = match mc {
                     MacroCall::FindLsbUint => MathFunction::FindLsb,
@@ -1954,8 +1886,7 @@ impl MacroCall {
                         arg3: None,
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 ctx.add_expression(
                     Expression::As {
                         expr: res,
@@ -1963,8 +1894,7 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::BitfieldInsert => {
                 let conv_arg_2 = ctx.add_expression(
@@ -1974,8 +1904,7 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 let conv_arg_3 = ctx.add_expression(
                     Expression::As {
                         expr: args[3],
@@ -1983,8 +1912,7 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 ctx.add_expression(
                     Expression::Math {
                         fun: MathFunction::InsertBits,
@@ -1994,8 +1922,7 @@ impl MacroCall {
                         arg3: Some(conv_arg_3),
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::BitfieldExtract => {
                 let conv_arg_1 = ctx.add_expression(
@@ -2005,8 +1932,7 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 let conv_arg_2 = ctx.add_expression(
                     Expression::As {
                         expr: args[2],
@@ -2014,8 +1940,7 @@ impl MacroCall {
                         convert: Some(4),
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 ctx.add_expression(
                     Expression::Math {
                         fun: MathFunction::ExtractBits,
@@ -2025,8 +1950,7 @@ impl MacroCall {
                         arg3: None,
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::Relational(fun) => ctx.add_expression(
                 Expression::Relational {
@@ -2034,13 +1958,10 @@ impl MacroCall {
                     argument: args[0],
                 },
                 Span::default(),
-                body,
-            ),
-            MacroCall::Unary(op) => ctx.add_expression(
-                Expression::Unary { op, expr: args[0] },
-                Span::default(),
-                body,
-            ),
+            )?,
+            MacroCall::Unary(op) => {
+                ctx.add_expression(Expression::Unary { op, expr: args[0] }, Span::default())?
+            }
             MacroCall::Binary(op) => ctx.add_expression(
                 Expression::Binary {
                     op,
@@ -2048,10 +1969,9 @@ impl MacroCall {
                     right: args[1],
                 },
                 Span::default(),
-                body,
-            ),
+            )?,
             MacroCall::Mod(size) => {
-                ctx.implicit_splat(frontend, &mut args[1], meta, size)?;
+                ctx.implicit_splat(&mut args[1], meta, size)?;
 
                 // x - y * floor(x / y)
 
@@ -2062,8 +1982,7 @@ impl MacroCall {
                         right: args[1],
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 let floor = ctx.add_expression(
                     Expression::Math {
                         fun: MathFunction::Floor,
@@ -2073,8 +1992,7 @@ impl MacroCall {
                         arg3: None,
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 let mult = ctx.add_expression(
                     Expression::Binary {
                         op: BinaryOperator::Multiply,
@@ -2082,8 +2000,7 @@ impl MacroCall {
                         right: args[1],
                     },
                     Span::default(),
-                    body,
-                );
+                )?;
                 ctx.add_expression(
                     Expression::Binary {
                         op: BinaryOperator::Subtract,
@@ -2091,11 +2008,10 @@ impl MacroCall {
                         right: mult,
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::Splatted(fun, size, i) => {
-                ctx.implicit_splat(frontend, &mut args[i], meta, size)?;
+                ctx.implicit_splat(&mut args[i], meta, size)?;
 
                 ctx.add_expression(
                     Expression::Math {
@@ -2106,8 +2022,7 @@ impl MacroCall {
                         arg3: args.get(3).copied(),
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::MixBoolean => ctx.add_expression(
                 Expression::Select {
@@ -2116,11 +2031,10 @@ impl MacroCall {
                     reject: args[0],
                 },
                 Span::default(),
-                body,
-            ),
+            )?,
             MacroCall::Clamp(size) => {
-                ctx.implicit_splat(frontend, &mut args[1], meta, size)?;
-                ctx.implicit_splat(frontend, &mut args[2], meta, size)?;
+                ctx.implicit_splat(&mut args[1], meta, size)?;
+                ctx.implicit_splat(&mut args[2], meta, size)?;
 
                 ctx.add_expression(
                     Expression::Math {
@@ -2131,8 +2045,7 @@ impl MacroCall {
                         arg3: args.get(3).copied(),
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
             MacroCall::BitCast(kind) => ctx.add_expression(
                 Expression::As {
@@ -2141,8 +2054,7 @@ impl MacroCall {
                     convert: None,
                 },
                 Span::default(),
-                body,
-            ),
+            )?,
             MacroCall::Derivate(axis, ctrl) => ctx.add_expression(
                 Expression::Derivative {
                     axis,
@@ -2150,16 +2062,16 @@ impl MacroCall {
                     expr: args[0],
                 },
                 Span::default(),
-                body,
-            ),
+            )?,
             MacroCall::Barrier => {
-                ctx.emit_restart(body);
-                body.push(crate::Statement::Barrier(crate::Barrier::all()), meta);
+                ctx.emit_restart();
+                ctx.body
+                    .push(crate::Statement::Barrier(crate::Barrier::all()), meta);
                 return Ok(None);
             }
             MacroCall::SmoothStep { splatted } => {
-                ctx.implicit_splat(frontend, &mut args[0], meta, splatted)?;
-                ctx.implicit_splat(frontend, &mut args[1], meta, splatted)?;
+                ctx.implicit_splat(&mut args[0], meta, splatted)?;
+                ctx.implicit_splat(&mut args[1], meta, splatted)?;
 
                 ctx.add_expression(
                     Expression::Math {
@@ -2170,8 +2082,7 @@ impl MacroCall {
                         arg3: None,
                     },
                     Span::default(),
-                    body,
-                )
+                )?
             }
         }))
     }
@@ -2183,7 +2094,6 @@ fn texture_call(
     level: SampleLevel,
     comps: CoordComponents,
     offset: Option<Handle<Expression>>,
-    body: &mut Block,
     meta: Span,
 ) -> Result<Handle<Expression>> {
     if let Some(sampler) = ctx.samplers.get(&image).copied() {
@@ -2205,8 +2115,7 @@ fn texture_call(
                 depth_ref: comps.depth_ref,
             },
             meta,
-            body,
-        ))
+        )?)
     } else {
         Err(Error {
             kind: ErrorKind::SemanticError("Bad call".into()),
@@ -2235,13 +2144,12 @@ impl Frontend {
         coord: Handle<Expression>,
         extra: Option<Handle<Expression>>,
         meta: Span,
-        body: &mut Block,
     ) -> Result<CoordComponents> {
         if let TypeInner::Image {
             dim,
             arrayed,
             class,
-        } = *self.resolve_type(ctx, image, meta)?
+        } = *ctx.resolve_type(image, meta)?
         {
             let image_size = match dim {
                 Dim::D1 => None,
@@ -2249,7 +2157,7 @@ impl Frontend {
                 Dim::D3 => Some(VectorSize::Tri),
                 Dim::Cube => Some(VectorSize::Tri),
             };
-            let coord_size = match *self.resolve_type(ctx, coord, meta)? {
+            let coord_size = match *ctx.resolve_type(coord, meta)? {
                 TypeInner::Vector { size, .. } => Some(size),
                 _ => None,
             };
@@ -2261,7 +2169,7 @@ impl Frontend {
 
             let coordinate = match (image_size, coord_size) {
                 (Some(size), Some(coord_s)) if size != coord_s => {
-                    ctx.vector_resize(size, coord, Span::default(), body)
+                    ctx.vector_resize(size, coord, Span::default())?
                 }
                 (None, Some(_)) => ctx.add_expression(
                     Expression::AccessIndex {
@@ -2269,8 +2177,7 @@ impl Frontend {
                         index: 0,
                     },
                     Span::default(),
-                    body,
-                ),
+                )?,
                 _ => coord,
             };
 
@@ -2283,8 +2190,7 @@ impl Frontend {
                 Some(ctx.add_expression(
                     Expression::AccessIndex { base: coord, index },
                     Span::default(),
-                    body,
-                ))
+                )?)
             } else {
                 None
             };
@@ -2300,8 +2206,7 @@ impl Frontend {
                         Some(ctx.add_expression(
                             Expression::AccessIndex { base: coord, index },
                             Span::default(),
-                            body,
-                        ))
+                        )?)
                     }
                 }
                 false => None,
@@ -2332,7 +2237,6 @@ impl Frontend {
 /// Helper function to cast a expression holding a sampled image to a
 /// depth image.
 pub fn sampled_to_depth(
-    module: &mut Module,
     ctx: &mut Context,
     image: Handle<Expression>,
     meta: Span,
@@ -2340,7 +2244,7 @@ pub fn sampled_to_depth(
 ) {
     // Get the a mutable type handle of the underlying image storage
     let ty = match ctx[image] {
-        Expression::GlobalVariable(handle) => &mut module.global_variables.get_mut(handle).ty,
+        Expression::GlobalVariable(handle) => &mut ctx.module.global_variables.get_mut(handle).ty,
         Expression::FunctionArgument(i) => {
             // Mark the function argument as carrying a depth texture
             ctx.parameters_info[i as usize].depth = true;
@@ -2356,7 +2260,7 @@ pub fn sampled_to_depth(
         }
     };
 
-    match module.types[*ty].inner {
+    match ctx.module.types[*ty].inner {
         // Update the image class to depth in case it already isn't
         TypeInner::Image {
             class,
@@ -2364,7 +2268,7 @@ pub fn sampled_to_depth(
             arrayed,
         } => match class {
             ImageClass::Sampled { multi, .. } => {
-                *ty = module.types.insert(
+                *ty = ctx.module.types.insert(
                     Type {
                         name: None,
                         inner: TypeInner::Image {

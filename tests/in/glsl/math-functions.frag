@@ -44,13 +44,14 @@ void main() {
     vec4 minOut = min(a, b);
     vec4 reflectOut = reflect(a, b);
     vec3 crossOut = cross(a.xyz, b.xyz);
-    mat4 outerProductOut = outerProduct(a, b);
+    // TODO: support outerProduct function in wgsl output
+    // mat4 outerProductOut = outerProduct(a, b);
     float distanceOut = distance(a, b);
     vec4 stepOut = step(a, b);
     // TODO: support out params in wgsl output
     // vec4 modfOut = modf(a, b);
     // vec4 frexpOut = frexp(a, b);
-    // float ldexpOut = ldexp(a.x, i);
+    float ldexpOut = ldexp(a.x, i);
     vec4 rad = radians(a);
     float deg = degrees(a.x);
     float smoothStepScalar = smoothstep(0.0, 1.0, 0.5);
