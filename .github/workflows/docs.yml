@@ -1,0 +1,43 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - trunk
+
+env:
+  CARGO_INCREMENTAL: false
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --no-self-update --profile=minimal
+
+      - name: Build the docs (nightly)
+        run: |
+          cargo +nightly doc --no-deps --lib
+        env:
+          RUSTDOCFLAGS: --cfg docsrs
+
+      - name: Build the docs (stable)
+        run: cargo +stable doc --no-deps --lib
+        if: ${{ failure() }}
+
+      - name: Deploy the docs
+        uses: JamesIves/github-pages-deploy-action@v4.5.0
+        with:
+          token: ${{ secrets.WEB_DEPLOY }}
+          folder: target/doc
+          repository-name: gfx-rs/wgpu-rs.github.io
+          branch: master
+          target-folder: doc

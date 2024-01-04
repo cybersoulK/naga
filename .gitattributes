@@ -1,1 +1,2 @@
-tests/out/**/* text eol=lf
+*.mtl binary
+*.obj binary
