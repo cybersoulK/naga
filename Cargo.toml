@@ -117,7 +117,7 @@ serde_json = "1.0.110"
 smallvec = "1"
 static_assertions = "1.1.0"
 thiserror = "1"
-wgpu = { version = "0.18.0", path = "./wgpu" }
+wgpu = { version = "0.19.1", path = "./wgpu" }
 wgpu-core = { version = "0.18.0", path = "./wgpu-core" }
 wgpu-example = { version = "0.18.0", path = "./examples/common" }
 wgpu-macros = { version = "0.18.0", path = "./wgpu-macros" }
